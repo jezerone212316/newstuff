@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 from typing import IO
 
 from requests import Session
@@ -51,11 +52,23 @@ def create_report_builder(report_type: str) -> ReportBuilder:
         'json': lambda p: JsonReportBuilder(p)
     }
 
-    if report_type not in builder_map:
+    normalized_type = (report_type or 'tex').lower()
+    if normalized_type not in builder_map:
         raise NotImplementedError(report_type)
 
     provider = create_default_provider()
-    return builder_map[report_type](provider)
+    return builder_map[normalized_type](provider)
+
+
+def _validate_path(path: str, *, must_exist: bool = False) -> str:
+    resolved = Path(path).expanduser()
+    if not resolved.is_absolute():
+        resolved = Path.cwd() / resolved
+
+    absolute = resolved.resolve(strict=must_exist)
+    if must_exist and not absolute.exists():
+        raise FileNotFoundError(path)
+    return str(absolute)
 
 
 def main(dirname: str, output_file: str, ip_file: str, report_type: str = 'tex'):
@@ -63,8 +76,11 @@ def main(dirname: str, output_file: str, ip_file: str, report_type: str = 'tex')
     start_date = ''
     builder = create_report_builder(report_type)
     parser = FlanXmlParser()
+    valid_dir = _validate_path(dirname, must_exist=True)
+    valid_output = _validate_path(output_file)
+    valid_ip_file = _validate_path(ip_file, must_exist=True)
 
-    for entry in os.scandir(dirname):  # type: os.DirEntry
+    for entry in os.scandir(valid_dir):  # type: os.DirEntry
         if not (entry.is_file() and entry.name.endswith('.xml')):
             continue
         data = parser.read_xml_file(entry.path)
@@ -72,7 +88,7 @@ def main(dirname: str, output_file: str, ip_file: str, report_type: str = 'tex')
         nmap_command = parse_nmap_command(data['nmaprun']['@args'])
         start_date = data['nmaprun']['@startstr']
 
-    with open(output_file, 'w+') as output, open(ip_file) as ip_source:
+    with open(valid_output, 'w+') as output, open(valid_ip_file) as ip_source:
         create_report(parser, builder, nmap_command, start_date, output, ip_source)
 
 
